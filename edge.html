@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>エッジ検出</title>
+<script>
+var canvas, context;          //キャンバス
+var img = new Image();            //画像
+
+//フィルターの重み係数
+var weight = new Array(6);
+//ソーベルフィルター（上から上下左右の重み係数）
+weight[0] = [ -1,-2,-1,
+               0, 0, 0,
+               1, 2, 1];
+weight[1] = [  1, 2, 1,
+               0, 0, 0,
+              -1,-2,-1];
+weight[2] = [ -1, 0, 1,
+              -2, 0, 2,
+              -1, 0, 1];
+weight[3] = [  1, 0,-1,
+               2, 0,-2,
+               1, 0,-1];
+//ラブラシアンフィルター（上が4近傍、下が8近傍）
+weight[4] = [  0,-1, 0,
+              -1, 4,-1,
+               0,-1, 0];
+weight[5] = [ -1,-1,-1,
+              -1, 8,-1,
+              -1,-1,-1];
+
+function initCanvas(){
+    //キャンバスの取得
+    canvas = document.getElementById("filter");         //キャンバスのID
+    context = canvas.getContext("2d");                  //キャンバスの描画機能を有効にする
+    //ボタンの無効化
+    document.getElementById("reset").disabled = true;   //元の画像に戻すボタンのID
+    document.getElementById("set").disabled = true;     //エッジ検出ボタンのID
+}
+
+function loadPicture(e) {
+    //選択したファイルのURLを作成
+    var fileurl = URL.createObjectURL(e.files[0]);
+    img.src = fileurl;                                  //画像ファイルを読み込む
+
+    //画像読み込み後キャンバスに表示
+    img.onload = function() {                           //画像を読み込んだら実行する関数
+       //ボタンの有効化
+       document.getElementById("reset").disabled = false;
+       document.getElementById("set").disabled = false;
+
+       //サイズを合わせる
+       canvas.width = img.width;                        //キャンバスの横幅、高さを読み込んだ画像の横幅、高さにする
+       canvas.height = img.height;
+
+       //画像を描画
+       drawImage();                                     //drawImage()関数
+    }
+}
+
+function drawImage() {
+    //画像を描画
+    context.drawImage(img, 0, 0);                       //読み込んだ画像
+}
+
+function filtering() {
+    //画像を描画
+    drawImage();
+
+    //画像データを取得
+    var imageData = context.getImageData(0, 0, img.width, img.height);
+    //加工用画像データを取得
+    var newImageData = context.getImageData(0, 0, img.width, img.height);
+
+    //選択されたラジオボタン（フィルターのタイプ）を取得
+    var weightTypeList = document.getElementsByName("weightType");  //name属性が"weightType"のラジオボタンをすべて取得して配列に入れる
+    var weightType = 0;
+    for (var i=0; i<weightTypeList.length; i++) {                   //選択されたラジオボタンの値を取得する
+        if (weightTypeList[i].checked) {
+            weightType = weightTypeList[i].value;
+            break;                                                  //ループの強制修了
+        }
+    }
+
+    //画像データを走査
+    var r, g, b;
+    var index, dindex, windex;
+    var num = 2;                                                    //フィルターの数（単体では１、上＋左のように合成するときは２）
+    for(var y=0; y<imageData.height; y++) {                         //元画像をX方向、Y方向にわけて1ドットずつ走査
+        for(var x=0; x<imageData.width; x++) {
+            //インデックス
+            index = (y*imageData.width+x)*4;                        //参照するドット（x,y)を、imageDataの先頭からアドレスに変換
+
+            //RGB、重み係数の初期化
+            var dr = [0,0];                         //要素が２つの配列を作る
+            var dg = [0,0];
+            var db = [0,0];
+            var dw = [0,0];
+
+            //周辺のRGBデータを計算
+            for (var dy = -1; dy<=1; dy++) {        //参照するドットの周辺ドットを走査　dy=-1,0,1、dx=-1,0,1の３×３＝９個分のループ
+                for(var dx=-1; dx<=1; dx++) {
+                    //インデックス
+                    dindex = ((y+dy)*imageData.width+(x+dx))*4;
+                    windex = (dx+1) + (dy+1)*3;
+
+                    //重み係数
+                    if(weightType<weight.length) {  //フィルター単体のとき
+                        num = 1;
+                        dw[0] = weight[weightType][windex];     //フィルターを合成するとき
+                    } else if (weightType==10) {
+                        dw[0] = weight[0][windex];              //上
+                        dw[1] = weight[1][windex];              //下
+                    } else if (weightType==11) {
+                        dw[0] = weight[2][windex];              //左
+                        dw[1] = weight[3][windex];              //右
+                    } else if (weightType==12) {
+                        dw[0] = weight[0][windex];              //上
+                        dw[1] = weight[2][windex];              //左
+                    }
+
+                    //画像データの範囲をチェック
+                    if ((y+dy>=0)&&(y+dy<imageData.height)      //周辺ドットが画像の外にはみだしていないとき
+                       &&(x+dx>=0)&&(x+dx<imageData.width)) {
+                       //重みづけ
+                       for(var i=0; i<num; i++) {                   //フィルターの数（１or２）
+                          dr[i] += dw[i]*imageData.data[dindex];    //画像のRGBデータに重み係数をかける
+                          dg[i] += dw[i]*imageData.data[dindex+1];
+                          db[i] += dw[i]*imageData.data[dindex+2];    
+                       }
+                    }
+                }
+            }
+
+            if(weightType<weight.length) {                      //フィルター単体のとき
+                r = dr[0];
+                g = dg[0];
+                b = db[0];                
+            } else {                                            //フィルターを合成するとき
+                //合成
+                r = Math.sqrt(dr[0]*dr[0]+dr[1]*dr[1]);         //フィルター1の二乗とフィルター２の二乗をルート
+                g = Math.sqrt(dg[0]*dg[0]+dg[1]*dg[1]);
+                b = Math.sqrt(db[0]*db[0]+db[1]*db[1]);
+            }
+
+            //画像データを加工
+            newImageData.data[index] = r;
+            newImageData.data[index+1] = g;
+            newImageData.data[index+2] = b;
+            newImageData.data[index+3] = imageData.data[index+3];   //透明度は元データのまま
+        }
+    }
+
+    //加工後の画像を描画
+    context.putImageData(newImageData, 0, 0);
+}
+</script>
+<style>
+canvas{
+    width: 640px;
+    height: 480px;
+    border: thin solid #CCCCCC;
+}
+form {
+    padding: 10px;
+    width: 620px;
+    background-color: #CCCCCC;
+}
+</style>
+</head>
+<body onload="initCanvas()">
+<p>エッジ検出</p>
+<hr>
+<canvas id="filter"></canvas>
+<form>
+画像ファイルを選択：<input type="file" accept="image/jpg, image/png"
+onChange="loadPicture(this);">
+<hr>
+ラぷラシアンフィルター：
+<input type="radio" name="weightType" value="4" checked>4近傍
+<input type="radio" name="weightType" value="5" >8近傍
+<br>
+ソーベルフィルター：
+<input type="radio" name="weightType" value="0" >上方向
+<input type="radio" name="weightType" value="1" >下方向
+<input type="radio" name="weightType" value="2" >左方向
+<input type="radio" name="weightType" value="3" >右方向
+<br>
+ソーベルフィルター（合成）：
+<input type="radio" name="weightType" value="10" >上＋下
+<input type="radio" name="weightType" value="11" >左＋右
+<input type="radio" name="weightType" value="12" >上＋左
+<hr>
+<input type="button" id="reset" value="元の画像に戻す" onclick="drawImage()">
+<input type="button" id="set" value="エッジ検出" onclick="filtering()"><br>
+</form>
+</body>
+</html>
